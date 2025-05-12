@@ -1,0 +1,508 @@
+<!DOCTYPE html><html><head><meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Paint Snake</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #111;
+            overflow: hidden;
+            font-family: 'Courier New', monospace;
+        }
+        canvas {
+            display: block;
+        }
+        #ui {
+            position: absolute;
+            color: white;
+            font-size: 24px;
+            text-align: center;
+            pointer-events: none;
+        }
+    </style>
+
+<base target="_self">
+
+
+    </head><body><div id="ui"></div>
+    <script>
+        let snake;
+        let food;
+        let gridSize = 20;
+        let cellSize;
+        let canvasSize;
+        let score = 0;
+        let gameState = 'start';
+        let paintSplatters = [];
+        let backgroundPaint = [];
+        let colorPalette = [
+            [255, 50, 50],
+            [50, 255, 50],
+            [50, 50, 255],
+            [255, 255, 50],
+            [255, 50, 255],
+            [50, 255, 255]
+        ];
+        let rippleEffects = [];
+        let audioInitialized = false;
+
+        function setup() {
+            calculateCanvasSize();
+            createCanvas(canvasSize, canvasSize);
+            frameRate(15);
+            
+            initializeBackground();
+            resetGame();
+            
+            document.addEventListener('keydown', handleKeyPress);
+        }
+
+        function calculateCanvasSize() {
+            let minDimension = min(windowWidth, windowHeight);
+            canvasSize = minDimension * 0.9;
+            cellSize = canvasSize / gridSize;
+        }
+
+        function windowResized() {
+            calculateCanvasSize();
+            resizeCanvas(canvasSize, canvasSize);
+        }
+
+        function initializeBackground() {
+            backgroundPaint = [];
+            for (let x = 0; x < gridSize; x++) {
+                backgroundPaint[x] = [];
+                for (let y = 0; y < gridSize; y++) {
+                    backgroundPaint[x][y] = {
+                        colors: [],
+                        intensity: 0
+                    };
+                }
+            }
+        }
+
+        function resetGame() {
+            snake = {
+                body: [
+                    {x: 10, y: 10},
+                    {x: 9, y: 10},
+                    {x: 8, y: 10}
+                ],
+                direction: {x: 1, y: 0},
+                nextDirection: {x: 1, y: 0},
+                color: colorPalette[0],
+                trail: []
+            };
+            
+            spawnFood();
+            score = 0;
+            paintSplatters = [];
+            rippleEffects = [];
+        }
+
+        function spawnFood() {
+            let validPositions = [];
+            
+            for (let x = 0; x < gridSize; x++) {
+                for (let y = 0; y < gridSize; y++) {
+                    let valid = true;
+                    for (let segment of snake.body) {
+                        if (segment.x === x && segment.y === y) {
+                            valid = false;
+                            break;
+                        }
+                    }
+                    if (valid) validPositions.push({x, y});
+                }
+            }
+            
+            if (validPositions.length > 0) {
+                let pos = random(validPositions);
+                food = {
+                    x: pos.x,
+                    y: pos.y,
+                    color: colorPalette[floor(random(colorPalette.length))]
+                };
+            }
+        }
+
+        function handleKeyPress(e) {
+            if (gameState === 'start' && e.code === 'Space') {
+                gameState = 'playing';
+                return;
+            }
+            
+            if (gameState === 'gameover' && e.code === 'Space') {
+                gameState = 'start';
+                resetGame();
+                return;
+            }
+            
+            if (gameState === 'playing') {
+                if (e.code === 'ArrowUp' && snake.direction.y === 0) {
+                    snake.nextDirection = {x: 0, y: -1};
+                } else if (e.code === 'ArrowDown' && snake.direction.y === 0) {
+                    snake.nextDirection = {x: 0, y: 1};
+                } else if (e.code === 'ArrowLeft' && snake.direction.x === 0) {
+                    snake.nextDirection = {x: -1, y: 0};
+                } else if (e.code === 'ArrowRight' && snake.direction.x === 0) {
+                    snake.nextDirection = {x: 1, y: 0};
+                } else if (e.code === 'KeyP') {
+                    gameState = gameState === 'playing' ? 'paused' : 'playing';
+                }
+            }
+        }
+
+        function update() {
+            if (gameState !== 'playing') return;
+            
+            // Update snake direction
+            snake.direction = {...snake.nextDirection};
+            
+            // Move snake
+            let newHead = {
+                x: snake.body[0].x + snake.direction.x,
+                y: snake.body[0].y + snake.direction.y
+            };
+            
+            // Check wall collision
+            if (newHead.x < 0 || newHead.x >= gridSize || newHead.y < 0 || newHead.y >= gridSize) {
+                gameState = 'gameover';
+                return;
+            }
+            
+            // Check self collision
+            for (let segment of snake.body) {
+                if (segment.x === newHead.x && segment.y === newHead.y) {
+                    gameState = 'gameover';
+                    return;
+                }
+            }
+            
+            snake.body.unshift(newHead);
+            
+            // Check food collision
+            if (newHead.x === food.x && newHead.y === food.y) {
+                score++;
+                createPaintSplatter(food.x, food.y, food.color);
+                snake.color = food.color;
+                spawnFood();
+                
+                // Add ripple effect
+                rippleEffects.push({
+                    x: food.x,
+                    y: food.y,
+                    radius: 0,
+                    maxRadius: 5,
+                    color: food.color,
+                    alpha: 255
+                });
+            } else {
+                snake.body.pop();
+            }
+            
+            // Update paint splatters
+            updatePaintSplatters();
+            
+            // Update ripple effects
+            updateRippleEffects();
+            
+            // Update snake trail
+            updateSnakeTrail();
+        }
+
+        function createPaintSplatter(x, y, color) {
+            let particles = [];
+            let particleCount = 20 + floor(random(10));
+            
+            for (let i = 0; i < particleCount; i++) {
+                let angle = random(TWO_PI);
+                let speed = random(0.5, 2);
+                let size = random(2, 6);
+                let life = floor(random(30, 60));
+                
+                particles.push({
+                    x: 0,
+                    y: 0,
+                    vx: cos(angle) * speed,
+                    vy: sin(angle) * speed,
+                    size: size,
+                    life: life,
+                    maxLife: life,
+                    color: [...color]
+                });
+            }
+            
+            paintSplatters.push({
+                x: x,
+                y: y,
+                particles: particles,
+                color: [...color]
+            });
+            
+            // Add to background paint
+            if (x >= 0 && x < gridSize && y >= 0 && y < gridSize) {
+                backgroundPaint[x][y].colors.push([...color]);
+                backgroundPaint[x][y].intensity = min(backgroundPaint[x][y].intensity + 0.2, 1);
+            }
+        }
+
+        function updatePaintSplatters() {
+            for (let i = paintSplatters.length - 1; i >= 0; i--) {
+                let splatter = paintSplatters[i];
+                let allDead = true;
+                
+                for (let j = 0; j < splatter.particles.length; j++) {
+                    let p = splatter.particles[j];
+                    
+                    if (p.life > 0) {
+                        p.x += p.vx;
+                        p.y += p.vy;
+                        p.life--;
+                        p.vy += 0.05; // Gravity
+                        allDead = false;
+                        
+                        // Add to background paint if particle lands
+                        if (p.life <= 0) {
+                            let gridX = floor(splatter.x + p.x / cellSize);
+                            let gridY = floor(splatter.y + p.y / cellSize);
+                            
+                            if (gridX >= 0 && gridX < gridSize && gridY >= 0 && gridY < gridSize) {
+                                backgroundPaint[gridX][gridY].colors.push([...splatter.color]);
+                                backgroundPaint[gridX][gridY].intensity = min(backgroundPaint[gridX][gridY].intensity + 0.05, 1);
+                            }
+                        }
+                    }
+                }
+                
+                if (allDead) {
+                    paintSplatters.splice(i, 1);
+                }
+            }
+        }
+
+        function updateRippleEffects() {
+            for (let i = rippleEffects.length - 1; i >= 0; i--) {
+                let ripple = rippleEffects[i];
+                ripple.radius += 0.2;
+                ripple.alpha -= 5;
+                
+                if (ripple.alpha <= 0) {
+                    rippleEffects.splice(i, 1);
+                }
+            }
+        }
+
+        function updateSnakeTrail() {
+            // Add current head position to trail
+            snake.trail.push({
+                x: snake.body[0].x,
+                y: snake.body[0].y,
+                alpha: 255
+            });
+            
+            // Fade out trail
+            for (let i = snake.trail.length - 1; i >= 0; i--) {
+                snake.trail[i].alpha -= 10;
+                if (snake.trail[i].alpha <= 0) {
+                    snake.trail.splice(i, 1);
+                }
+            }
+        }
+
+        function draw() {
+            background(20);
+            
+            // Draw background paint
+            drawBackgroundPaint();
+            
+            // Draw food
+            drawFood();
+            
+            // Draw paint splatters
+            drawPaintSplatters();
+            
+            // Draw ripple effects
+            drawRippleEffects();
+            
+            // Draw snake
+            drawSnake();
+            
+            // Draw snake trail
+            drawSnakeTrail();
+            
+            // Draw UI
+            drawUI();
+            
+            // Update game state
+            update();
+        }
+
+        function drawBackgroundPaint() {
+            for (let x = 0; x < gridSize; x++) {
+                for (let y = 0; y < gridSize; y++) {
+                    let cell = backgroundPaint[x][y];
+                    if (cell.colors.length > 0) {
+                        let avgColor = [0, 0, 0];
+                        for (let c of cell.colors) {
+                            avgColor[0] += c[0];
+                            avgColor[1] += c[1];
+                            avgColor[2] += c[2];
+                        }
+                        avgColor[0] = floor(avgColor[0] / cell.colors.length);
+                        avgColor[1] = floor(avgColor[1] / cell.colors.length);
+                        avgColor[2] = floor(avgColor[2] / cell.colors.length);
+                        
+                        let intensity = cell.intensity;
+                        fill(avgColor[0], avgColor[1], avgColor[2], intensity * 150);
+                        noStroke();
+                        rect(x * cellSize, y * cellSize, cellSize, cellSize);
+                    }
+                }
+            }
+        }
+
+        function drawFood() {
+            if (!food) return;
+            
+            let centerX = food.x * cellSize + cellSize / 2;
+            let centerY = food.y * cellSize + cellSize / 2;
+            
+            // Glowing effect
+            for (let i = 3; i > 0; i--) {
+                let size = cellSize * 0.6 + i * 5;
+                fill(food.color[0], food.color[1], food.color[2], 50 / i);
+                ellipse(centerX, centerY, size, size);
+            }
+            
+            // Main food
+            fill(food.color);
+            ellipse(centerX, centerY, cellSize * 0.6, cellSize * 0.6);
+        }
+
+        function drawPaintSplatters() {
+            for (let splatter of paintSplatters) {
+                let baseX = splatter.x * cellSize + cellSize / 2;
+                let baseY = splatter.y * cellSize + cellSize / 2;
+                
+                for (let p of splatter.particles) {
+                    if (p.life > 0) {
+                        let alpha = map(p.life, 0, p.maxLife, 0, 255);
+                        fill(p.color[0], p.color[1], p.color[2], alpha);
+                        noStroke();
+                        ellipse(
+                            baseX + p.x,
+                            baseY + p.y,
+                            p.size,
+                            p.size
+                        );
+                    }
+                }
+            }
+        }
+
+        function drawRippleEffects() {
+            for (let ripple of rippleEffects) {
+                let centerX = ripple.x * cellSize + cellSize / 2;
+                let centerY = ripple.y * cellSize + cellSize / 2;
+                
+                noFill();
+                stroke(ripple.color[0], ripple.color[1], ripple.color[2], ripple.alpha);
+                strokeWeight(2);
+                ellipse(centerX, centerY, ripple.radius * cellSize, ripple.radius * cellSize);
+            }
+        }
+
+        function drawSnake() {
+            // Draw body segments with ripple effect
+            for (let i = 0; i < snake.body.length; i++) {
+                let segment = snake.body[i];
+                let centerX = segment.x * cellSize + cellSize / 2;
+                let centerY = segment.y * cellSize + cellSize / 2;
+                
+                // Glowing effect
+                fill(snake.color[0], snake.color[1], snake.color[2], 50);
+                ellipse(centerX, centerY, cellSize * 1.2, cellSize * 1.2);
+                
+                // Main segment
+                fill(snake.color);
+                ellipse(centerX, centerY, cellSize * 0.8, cellSize * 0.8);
+                
+                // Eyes on head
+                if (i === 0) {
+                    fill(255);
+                    let eyeSize = cellSize * 0.15;
+                    let eyeOffsetX = snake.direction.x * cellSize * 0.2;
+                    let eyeOffsetY = snake.direction.y * cellSize * 0.2;
+                    
+                    // Eyes look in direction of movement
+                    if (snake.direction.x !== 0) {
+                        ellipse(
+                            centerX - eyeOffsetX,
+                            centerY - cellSize * 0.2,
+                            eyeSize,
+                            eyeSize
+                        );
+                        ellipse(
+                            centerX - eyeOffsetX,
+                            centerY + cellSize * 0.2,
+                            eyeSize,
+                            eyeSize
+                        );
+                    } else {
+                        ellipse(
+                            centerX - cellSize * 0.2,
+                            centerY - eyeOffsetY,
+                            eyeSize,
+                            eyeSize
+                        );
+                        ellipse(
+                            centerX + cellSize * 0.2,
+                            centerY - eyeOffsetY,
+                            eyeSize,
+                            eyeSize
+                        );
+                    }
+                }
+            }
+        }
+
+        function drawSnakeTrail() {
+            for (let i = 0; i < snake.trail.length; i++) {
+                let point = snake.trail[i];
+                let centerX = point.x * cellSize + cellSize / 2;
+                let centerY = point.y * cellSize + cellSize / 2;
+                
+                fill(snake.color[0], snake.color[1], snake.color[2], point.alpha);
+                ellipse(centerX, centerY, cellSize * 0.4, cellSize * 0.4);
+            }
+        }
+
+        function drawUI() {
+            let uiText = "";
+            
+            if (gameState === 'start') {
+                uiText = "PAINT SNAKE\n\nUse arrow keys to move\nEat colored pellets to grow\n\nPress SPACE to start";
+            } else if (gameState === 'paused') {
+                uiText = "PAUSED\n\nPress P to resume\nScore: " + score;
+            } else if (gameState === 'gameover') {
+                uiText = "GAME OVER\n\nScore: " + score + "\n\nPress SPACE to restart";
+            } else {
+                uiText = "Score: " + score;
+            }
+            
+            document.getElementById('ui').innerHTML = uiText.replace(/\n/g, '<br>');
+        }
+    </script>
+
+              
+          
+                
+          
+              
+</body></html>
